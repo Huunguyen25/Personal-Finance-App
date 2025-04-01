@@ -6,6 +6,7 @@ import '../models/account.dart';
 
 class AuthService {
   final DatabaseHelper _dbHelper = DatabaseHelper();
+  static const String _currentUserKey = 'current_user_id';
 
   // Check if email already exists
   Future<bool> isEmailAvailable(String email) async {
@@ -244,5 +245,23 @@ class AuthService {
       print('Error during data wipe: $e');
       rethrow;
     }
+  }
+
+  // Get the current user ID from shared preferences
+  static Future<String?> getStoredUserId() {
+    final prefs = SharedPreferences.getInstance();
+    return prefs.then((prefs) => prefs.getString(_currentUserKey));
+  }
+
+  // Set the current user ID
+  static Future<bool> setCurrentUserId(String userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.setString(_currentUserKey, userId);
+  }
+
+  // Clear the current user ID (logout)
+  static Future<bool> clearCurrentUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.remove(_currentUserKey);
   }
 }

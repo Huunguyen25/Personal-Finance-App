@@ -4,6 +4,9 @@ import 'package:fl_chart/fl_chart.dart';
 import '../models/transaction.dart';
 import '../models/transaction_categories.dart';
 import '../services/budget_service.dart';
+import '../services/transaction_service.dart';
+import '../database/budget_database.dart';
+import '../services/auth_service.dart'; // Add this import for getting the current user
 import 'dart:math' as math;
 
 class InsightsScreen extends StatefulWidget {
@@ -16,21 +19,32 @@ class InsightsScreen extends StatefulWidget {
 class _InsightsScreenState extends State<InsightsScreen> {
   bool _isLoading = true;
   List<Transaction> _monthTransactions = [];
+  List<Transaction> _allTransactions = [];
   DateTime _selectedMonth = DateTime.now();
   final Map<String, double> _expensesByCategory = {};
   final Map<String, double> _incomeByCategory = {};
   final Map<String, Color> _categoryColors = {};
   double _totalExpenses = 0;
   double _totalIncome = 0;
-  double _budgetedIncome = 0; // From the budget screen
-  double _budgetedPaychecks = 0; // Total from paychecks in budget screen
+  double _budgetedIncome = 0;
+  double _budgetedPaychecks = 0;
   bool _hasBudget = false;
+  int? _userId; // Add userId field
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadCurrentUser();
     _assignColorsToCategories();
+  }
+
+  // Load current user and then load data
+  Future<void> _loadCurrentUser() async {
+    final userId = await AuthService().getCurrentUserId();
+    setState(() {
+      _userId = userId;
+    });
+    _loadData();
   }
 
   void _assignColorsToCategories() {
@@ -50,8 +64,15 @@ class _InsightsScreenState extends State<InsightsScreen> {
     });
 
     try {
-      // Load both transaction data and budget data
-      await Future.wait([_loadTransactionsForMonth(), _loadBudgetData()]);
+      // Only load data if we have a valid user ID
+      if (_userId != null) {
+        // Load both transaction data and budget data
+        await Future.wait([
+          _loadTransactionsForMonth(),
+          _loadBudgetData(),
+          _loadTransactions(),
+        ]);
+      }
 
       setState(() {
         _isLoading = false;
@@ -66,12 +87,15 @@ class _InsightsScreenState extends State<InsightsScreen> {
 
   Future<void> _loadTransactionsForMonth() async {
     try {
+      if (_userId == null) return;
+
       final allTransactions = await TransactionService.getAllTransactions();
 
       final filteredTransactions =
           allTransactions.where((transaction) {
             return transaction.date.year == _selectedMonth.year &&
-                transaction.date.month == _selectedMonth.month;
+                transaction.date.month == _selectedMonth.month &&
+                transaction.userId == _userId; // Filter by userId
           }).toList();
 
       _processTransactionsByCategory(filteredTransactions);
@@ -84,19 +108,61 @@ class _InsightsScreenState extends State<InsightsScreen> {
     }
   }
 
+  Future<void> _loadTransactions() async {
+    try {
+      if (_userId == null) return;
+
+      final transactions = await TransactionService.getAllTransactions();
+
+      // Filter transactions by current user ID
+      final userTransactions =
+          transactions.where((t) => t.userId == _userId).toList();
+
+      setState(() {
+        _allTransactions = userTransactions;
+        _isLoading = false;
+      });
+    } catch (e) {
+      print('Error loading transactions: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
   Future<void> _loadBudgetData() async {
     try {
-      final budgetData = await BudgetService.getCurrentBudgetData();
+      if (_userId == null) return;
 
+      // Get the current month name to match with the budget data format
       final currentMonthName = DateFormat('MMMM').format(_selectedMonth);
-      final budgetMonth = budgetData['month'];
 
-      // Only use budget data if it's for the current month
-      if (budgetMonth == currentMonthName) {
+      // Check if budget exists for this month
+      final hasBudget = await BudgetDatabase.instance.hasBudget(
+        currentMonthName,
+      );
+
+      if (hasBudget) {
+        // Fetch income value
+        final income = await BudgetDatabase.instance.getIncome(
+          currentMonthName,
+        );
+
+        // Fetch paychecks to calculate total
+        final paychecks = await BudgetDatabase.instance.getPaychecks(
+          currentMonthName,
+        );
+
+        // Calculate total of expected paychecks
+        final totalPaychecks = paychecks.fold<double>(
+          0.0,
+          (sum, paycheck) => sum + (paycheck['amount'] as double),
+        );
+
         setState(() {
-          _hasBudget = budgetData['hasBudget'] ?? false;
-          _budgetedIncome = budgetData['income'] ?? 0.0;
-          _budgetedPaychecks = budgetData['totalPaychecks'] ?? 0.0;
+          _hasBudget = hasBudget;
+          _budgetedIncome = income;
+          _budgetedPaychecks = totalPaychecks;
         });
       } else {
         setState(() {
@@ -605,11 +671,6 @@ class _InsightsScreenState extends State<InsightsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildStrategyTile(
-          'Review Your Monthly Subscriptions',
-          'Cancel unused services and look for bundle deals to save money.',
-          Icons.subscriptions,
-        ),
         ...topCategories.map((entry) {
           final category = Categories.findCategoryById(entry.key);
           final categoryName = category?.name ?? 'Unknown';
@@ -657,7 +718,7 @@ class _InsightsScreenState extends State<InsightsScreen> {
               category?.icon ?? Icons.attach_money,
             );
           }
-        }).toList(),
+        }),
         _buildStrategyTile(
           'Set Up Automatic Savings',
           'Transfer a small amount to savings each payday before you can spend it.',
@@ -728,10 +789,8 @@ class _InsightsScreenState extends State<InsightsScreen> {
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: () {
-                  Navigator.of(
-                    context,
-                  ).pushNamedAndRemoveUntil('/home', (route) => false);
-                  DefaultTabController.of(context)?.animateTo(2);
+                  // Navigate directly to the transactions screen instead of home
+                  Navigator.pushNamed(context, '/transactions');
                 },
                 child: const Text('Add Transactions'),
               ),

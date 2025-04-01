@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:table_calendar/table_calendar.dart';
 import '../models/transaction.dart';
 import '../models/transaction_categories.dart';
+import '../services/transaction_service.dart';
+import '../services/auth_service.dart';
 
 class TransactionsScreen extends StatefulWidget {
   const TransactionsScreen({super.key});
@@ -14,6 +16,7 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   DateTime _selectedDay = DateTime.now();
   DateTime _focusedDay = DateTime.now();
   CalendarFormat _calendarFormat = CalendarFormat.week;
+  final AuthService _authService = AuthService();
 
   // Use the list of transactions from shared service
   List<Transaction> _transactions = [];
@@ -26,10 +29,15 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
 
   // Load saved transactions
   Future<void> _loadTransactions() async {
-    final transactions = await TransactionService.getAllTransactions();
-    setState(() {
-      _transactions = transactions;
-    });
+    try {
+      final transactions = await TransactionService.getAllTransactions();
+      setState(() {
+        _transactions = transactions;
+      });
+    } catch (e) {
+      // Handle error - could show a snackbar here
+      print('Error loading transactions: $e');
+    }
   }
 
   // Filtered transactions based on selected date
@@ -69,26 +77,49 @@ class _TransactionsScreenState extends State<TransactionsScreen> {
   }
 
   // Add functionality to create a new transaction
-  void _addTransaction(
+  Future<void> _addTransaction(
     String title,
     String categoryId,
     double amount,
     bool isExpense,
-  ) {
-    final newTransaction = Transaction(
-      title: title,
-      categoryId: categoryId,
-      amount: amount,
-      isExpense: isExpense,
-      date: _selectedDay,
-    );
+  ) async {
+    try {
+      // Get the current user ID
+      final userId = await _authService.getCurrentUserId();
+      if (userId == null) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('User is not logged in')));
+        return;
+      }
 
-    setState(() {
-      _transactions.add(newTransaction);
-    });
+      final newTransaction = Transaction(
+        userId: userId,
+        title: title,
+        categoryId: categoryId,
+        amount: amount,
+        isExpense: isExpense,
+        date: _selectedDay,
+      );
 
-    // Use the shared service to save transactions
-    TransactionService.saveTransactions(_transactions);
+      // Save the transaction to the database
+      final success = await TransactionService.saveTransaction(newTransaction);
+
+      if (success) {
+        // Add to local state for immediate UI update
+        setState(() {
+          _transactions.add(newTransaction);
+        });
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to save transaction')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
   }
 
   // Replace dialog with bottom sheet

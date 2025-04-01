@@ -16,7 +16,7 @@ class _AddBankAccountScreenState extends State<AddBankAccountScreen> {
   final AuthService _authService = AuthService();
   bool _isLoading = false;
   BankingInstitution? _selectedInstitution;
-  List<Account> _addedAccounts = [];
+  final List<Account> _addedAccounts = [];
   int? _userId;
 
   @override

@@ -6,6 +6,7 @@ import '../models/transaction.dart';
 import 'package:intl/intl.dart';
 import '../models/transaction_categories.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/transaction_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -99,21 +100,15 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // Load transactions for a specific day
+  // Load transactions for the selected day
   Future<void> _loadDayTransactions(DateTime day) async {
     try {
-      final allTransactions = await TransactionService.getAllTransactions();
-
+      final transactions = await TransactionService.getTransactionsForDate(day);
       setState(() {
-        _transactions =
-            allTransactions.where((transaction) {
-              return transaction.date.year == day.year &&
-                  transaction.date.month == day.month &&
-                  transaction.date.day == day.day;
-            }).toList();
+        _transactions = transactions;
       });
     } catch (e) {
-      print('Error loading day transactions: $e');
+      print('Error loading transactions: $e');
     }
   }
 
@@ -557,7 +552,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           TextButton(
                             onPressed: () {
                               // Navigate to transactions tab
-                              DefaultTabController.of(context)?.animateTo(1);
+                              DefaultTabController.of(context).animateTo(1);
                             },
                             child: const Text('View All'),
                           ),

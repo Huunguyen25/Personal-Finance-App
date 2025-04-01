@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
+import '../database/budget_database.dart';
 
 class BudgetScreen extends StatefulWidget {
   const BudgetScreen({super.key});
@@ -16,6 +15,7 @@ class _BudgetScreenState extends State<BudgetScreen> {
   List<Map<String, dynamic>> _paychecks = [];
   List<Map<String, dynamic>> _plannedBills = [];
   String _currentMonth = '';
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -29,97 +29,61 @@ class _BudgetScreenState extends State<BudgetScreen> {
   }
 
   Future<void> _loadBudgetData() async {
-    final prefs = await SharedPreferences.getInstance();
-    final storedMonth = prefs.getString('budget_month');
-
-    if (storedMonth == _currentMonth) {
-      final hasBudget = prefs.getBool('has_budget') ?? false;
-      final income = prefs.getDouble('budget_income') ?? 0.0;
-      final paycheckData = prefs.getString('budget_paychecks');
-      final billsData = prefs.getString('budget_bills');
-
-      setState(() {
-        _hasBudget = hasBudget;
-        _income = income;
-
-        if (paycheckData != null) {
-          final List<dynamic> decodedPaychecks = jsonDecode(paycheckData);
-          _paychecks =
-              decodedPaychecks.map<Map<String, dynamic>>((item) {
-                return {
-                  'name': item['name'],
-                  'amount': item['amount'],
-                  'date': DateTime.parse(item['date']),
-                };
-              }).toList();
-        }
-
-        if (billsData != null) {
-          final List<dynamic> decodedBills = jsonDecode(billsData);
-          _plannedBills =
-              decodedBills.map<Map<String, dynamic>>((item) {
-                return {
-                  'name': item['name'],
-                  'amount': item['amount'],
-                  'dueDate': DateTime.parse(item['dueDate']),
-                };
-              }).toList();
-        }
-      });
-    } else {
-      await prefs.setString('budget_month', _currentMonth);
-      await prefs.setBool('has_budget', false);
-      setState(() {
-        _hasBudget = false;
-        _income = 0.0;
-        _paychecks = [];
-        _plannedBills = [];
-      });
-    }
-  }
-
-  Future<void> _saveBudgetData() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('budget_month', _currentMonth);
-    await prefs.setBool('has_budget', _hasBudget);
-    await prefs.setDouble('budget_income', _income);
-
-    final List<Map<String, dynamic>> jsonPaychecks =
-        _paychecks.map((paycheck) {
-          return {
-            'name': paycheck['name'],
-            'amount': paycheck['amount'],
-            'date': (paycheck['date'] as DateTime).toIso8601String(),
-          };
-        }).toList();
-
-    final List<Map<String, dynamic>> jsonBills =
-        _plannedBills.map((bill) {
-          return {
-            'name': bill['name'],
-            'amount': bill['amount'],
-            'dueDate': (bill['dueDate'] as DateTime).toIso8601String(),
-          };
-        }).toList();
-
-    await prefs.setString('budget_paychecks', jsonEncode(jsonPaychecks));
-    await prefs.setString('budget_bills', jsonEncode(jsonBills));
-  }
-
-  void _createBudget() {
     setState(() {
-      _hasBudget = true;
+      _isLoading = true;
     });
 
-    _saveBudgetData();
+    try {
+      _hasBudget = await BudgetDatabase.instance.hasBudget(_currentMonth);
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${_currentMonth} budget created'),
-        backgroundColor: Colors.green,
-        duration: const Duration(seconds: 1),
-      ),
-    );
+      if (_hasBudget) {
+        _income = await BudgetDatabase.instance.getIncome(_currentMonth);
+        _paychecks = await BudgetDatabase.instance.getPaychecks(_currentMonth);
+        _plannedBills = await BudgetDatabase.instance.getPlannedBills(
+          _currentMonth,
+        );
+      } else {
+        await BudgetDatabase.instance.cleanupOldData(_currentMonth);
+
+        setState(() {
+          _income = 0.0;
+          _paychecks = [];
+          _plannedBills = [];
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading budget data: $e');
+    }
+
+    setState(() {
+      _isLoading = false;
+    });
+  }
+
+  void _createBudget() async {
+    try {
+      await BudgetDatabase.instance.insertIncome(_currentMonth, 0.0);
+
+      setState(() {
+        _hasBudget = true;
+        _income = 0.0;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('$_currentMonth budget created'),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error creating budget: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   void _updateIncome() {
@@ -183,12 +147,24 @@ class _BudgetScreenState extends State<BudgetScreen> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: () {
-                      setState(() {
-                        _income = newIncome;
-                      });
-                      _saveBudgetData();
-                      Navigator.of(context).pop();
+                    onPressed: () async {
+                      try {
+                        await BudgetDatabase.instance.insertIncome(
+                          _currentMonth,
+                          newIncome,
+                        );
+                        setState(() {
+                          _income = newIncome;
+                        });
+                        Navigator.of(context).pop();
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Error updating income: $e'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
                     },
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -332,17 +308,31 @@ class _BudgetScreenState extends State<BudgetScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: () {
+                        onPressed: () async {
                           if (name.isNotEmpty && amount > 0) {
-                            setState(() {
-                              _paychecks.add({
-                                'name': name,
-                                'amount': amount,
-                                'date': date,
+                            try {
+                              await BudgetDatabase.instance.insertPaycheck(
+                                _currentMonth,
+                                name,
+                                amount,
+                                date,
+                              );
+
+                              final paychecks = await BudgetDatabase.instance
+                                  .getPaychecks(_currentMonth);
+
+                              setState(() {
+                                _paychecks = paychecks;
                               });
-                            });
-                            _saveBudgetData();
-                            Navigator.of(context).pop();
+                              Navigator.of(context).pop();
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Error adding paycheck: $e'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
                           }
                         },
                         style: ElevatedButton.styleFrom(
@@ -490,17 +480,31 @@ class _BudgetScreenState extends State<BudgetScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: () {
+                        onPressed: () async {
                           if (name.isNotEmpty && amount > 0) {
-                            setState(() {
-                              _plannedBills.add({
-                                'name': name,
-                                'amount': amount,
-                                'dueDate': dueDate,
+                            try {
+                              await BudgetDatabase.instance.insertBill(
+                                _currentMonth,
+                                name,
+                                amount,
+                                dueDate,
+                              );
+
+                              final bills = await BudgetDatabase.instance
+                                  .getPlannedBills(_currentMonth);
+
+                              setState(() {
+                                _plannedBills = bills;
                               });
-                            });
-                            _saveBudgetData();
-                            Navigator.of(context).pop();
+                              Navigator.of(context).pop();
+                            } catch (e) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('Error adding bill: $e'),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
                           }
                         },
                         style: ElevatedButton.styleFrom(
@@ -526,26 +530,60 @@ class _BudgetScreenState extends State<BudgetScreen> {
     );
   }
 
-  void _removePaycheck(int index) {
-    setState(() {
-      _paychecks.removeAt(index);
-    });
-    _saveBudgetData();
+  void _removePaycheck(int id) async {
+    try {
+      await BudgetDatabase.instance.deletePaycheck(id);
+
+      final paychecks = await BudgetDatabase.instance.getPaychecks(
+        _currentMonth,
+      );
+
+      setState(() {
+        _paychecks = paychecks;
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error removing paycheck: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
-  void _removePlannedBill(int index) {
-    setState(() {
-      _plannedBills.removeAt(index);
-    });
-    _saveBudgetData();
+  void _removePlannedBill(int id) async {
+    try {
+      await BudgetDatabase.instance.deleteBill(id);
+
+      final bills = await BudgetDatabase.instance.getPlannedBills(
+        _currentMonth,
+      );
+
+      setState(() {
+        _plannedBills = bills;
+      });
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error removing bill: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   double get _totalPaychecks {
-    return _paychecks.fold(0.0, (sum, paycheck) => sum + paycheck['amount']);
+    return _paychecks.fold(
+      0.0,
+      (sum, paycheck) => sum + (paycheck['amount'] as double),
+    );
   }
 
   double get _totalPlannedBills {
-    return _plannedBills.fold(0.0, (sum, bill) => sum + bill['amount']);
+    return _plannedBills.fold(
+      0.0,
+      (sum, bill) => sum + (bill['amount'] as double),
+    );
   }
 
   double get _netIncome {
@@ -554,6 +592,10 @@ class _BudgetScreenState extends State<BudgetScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     if (!_hasBudget) {
       return Center(
         child: Column(
@@ -663,22 +705,25 @@ class _BudgetScreenState extends State<BudgetScreen> {
                           itemBuilder: (context, index) {
                             final paycheck = _paychecks[index];
                             return ListTile(
-                              title: Text(paycheck['name']),
+                              title: Text(paycheck['name'] as String),
                               subtitle: Text(
-                                'Expected on ${DateFormat('MM/dd').format(paycheck['date'])}',
+                                'Expected on ${DateFormat('MM/dd').format(paycheck['date'] as DateTime)}',
                               ),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
-                                    '\$${paycheck['amount'].toStringAsFixed(2)}',
+                                    '\$${(paycheck['amount'] as double).toStringAsFixed(2)}',
                                     style: const TextStyle(
                                       fontWeight: FontWeight.bold,
                                     ),
                                   ),
                                   IconButton(
                                     icon: const Icon(Icons.delete_outline),
-                                    onPressed: () => _removePaycheck(index),
+                                    onPressed:
+                                        () => _removePaycheck(
+                                          paycheck['id'] as int,
+                                        ),
                                   ),
                                 ],
                               ),
@@ -730,15 +775,15 @@ class _BudgetScreenState extends State<BudgetScreen> {
                           itemBuilder: (context, index) {
                             final bill = _plannedBills[index];
                             return ListTile(
-                              title: Text(bill['name']),
+                              title: Text(bill['name'] as String),
                               subtitle: Text(
-                                'Due on ${DateFormat('MM/dd').format(bill['dueDate'])}',
+                                'Due on ${DateFormat('MM/dd').format(bill['dueDate'] as DateTime)}',
                               ),
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Text(
-                                    '\$${bill['amount'].toStringAsFixed(2)}',
+                                    '\$${(bill['amount'] as double).toStringAsFixed(2)}',
                                     style: const TextStyle(
                                       fontWeight: FontWeight.bold,
                                       color: Colors.red,
@@ -746,7 +791,10 @@ class _BudgetScreenState extends State<BudgetScreen> {
                                   ),
                                   IconButton(
                                     icon: const Icon(Icons.delete_outline),
-                                    onPressed: () => _removePlannedBill(index),
+                                    onPressed:
+                                        () => _removePlannedBill(
+                                          bill['id'] as int,
+                                        ),
                                   ),
                                 ],
                               ),

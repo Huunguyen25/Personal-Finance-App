@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../models/user.dart';
 import '../../services/auth_service.dart';
-import '../../models/banking_institution.dart';
 import 'dart:math';
 
 class SignupStep3Screen extends StatefulWidget {

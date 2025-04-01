@@ -1,96 +1,54 @@
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 
 class Transaction {
+  final String id;
+  final int userId;
   final String title;
-  final String categoryId; // Changed from category to categoryId
+  final String categoryId;
   final double amount;
   final bool isExpense;
   final DateTime date;
   final String? note;
 
   Transaction({
+    String? id,
+    required this.userId,
     required this.title,
-    required this.categoryId, // Changed parameter name
+    required this.categoryId,
     required this.amount,
     required this.isExpense,
     required this.date,
     this.note,
-  });
+  }) : id = id ?? const Uuid().v4();
 
-  // Add serialization methods
-  Map<String, dynamic> toJson() {
+  // Convert transaction to Map for SQLite
+  Map<String, dynamic> toMap() {
     return {
+      'id': id,
+      'userId': userId,
       'title': title,
-      'categoryId': categoryId, // Changed field name
+      'categoryId': categoryId,
       'amount': amount,
-      'isExpense': isExpense,
+      'isExpense': isExpense ? 1 : 0,
       'date': date.toIso8601String(),
       'note': note,
     };
   }
 
-  // Create a transaction from JSON
-  factory Transaction.fromJson(Map<String, dynamic> json) {
+  // Create transaction from Map from SQLite
+  factory Transaction.fromMap(Map<String, dynamic> map) {
     return Transaction(
-      title: json['title'],
-      // Handle both old "category" field and new "categoryId" field for backward compatibility
-      categoryId: json['categoryId'] ?? json['category'] ?? 'miscellaneous',
-      amount: json['amount'].toDouble(),
-      isExpense: json['isExpense'],
-      date: DateTime.parse(json['date']),
-      note: json['note'],
+      id: map['id'],
+      userId: map['userId'],
+      title: map['title'],
+      categoryId: map['categoryId'] ?? map['category'] ?? 'miscellaneous',
+      amount:
+          map['amount'] is int
+              ? (map['amount'] as int).toDouble()
+              : map['amount'],
+      isExpense: map['isExpense'] == 1,
+      date: DateTime.parse(map['date']),
+      note: map['note'],
     );
-  }
-}
-
-// Shared service to manage transactions across screens
-class TransactionService {
-  static const String _transactionsKey = 'transactions';
-
-  // Get all transactions
-  static Future<List<Transaction>> getAllTransactions() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final transactionsJson = prefs.getString(_transactionsKey);
-
-      if (transactionsJson != null) {
-        final List<dynamic> decodedList = jsonDecode(transactionsJson);
-        return decodedList.map((item) => Transaction.fromJson(item)).toList();
-      }
-    } catch (e) {
-      print('Error loading transactions: $e');
-    }
-    return [];
-  }
-
-  // Save transactions
-  static Future<void> saveTransactions(List<Transaction> transactions) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final List<Map<String, dynamic>> transactionsMap =
-          transactions.map((t) => t.toJson()).toList();
-      await prefs.setString(_transactionsKey, jsonEncode(transactionsMap));
-    } catch (e) {
-      print('Error saving transactions: $e');
-    }
-  }
-
-  // Get today's transactions
-  static Future<List<Transaction>> getTodayTransactions() async {
-    final allTransactions = await getAllTransactions();
-    final now = DateTime.now();
-    return allTransactions.where((transaction) {
-      return transaction.date.year == now.year &&
-          transaction.date.month == now.month &&
-          transaction.date.day == now.day;
-    }).toList();
-  }
-
-  // Add a new transaction
-  static Future<void> addTransaction(Transaction transaction) async {
-    final transactions = await getAllTransactions();
-    transactions.add(transaction);
-    await saveTransactions(transactions);
   }
 }

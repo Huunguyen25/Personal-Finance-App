@@ -17,7 +17,31 @@ class DatabaseHelper {
 
   Future<Database> _initDatabase() async {
     String path = join(await getDatabasesPath(), 'finance_manager.db');
-    return await openDatabase(path, version: 1, onCreate: _createDb);
+    return await openDatabase(
+      path,
+      version: 2,
+      onCreate: _createDb,
+      onUpgrade: _onUpgrade,
+    );
+  }
+
+  Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Add transactions table in version 2
+      await db.execute('''
+        CREATE TABLE transactions(
+          id TEXT PRIMARY KEY,
+          userId INTEGER NOT NULL,
+          title TEXT NOT NULL,
+          categoryId TEXT NOT NULL,
+          amount REAL NOT NULL,
+          isExpense INTEGER NOT NULL,
+          date TEXT NOT NULL,
+          note TEXT,
+          FOREIGN KEY (userId) REFERENCES users (id)
+        )
+      ''');
+    }
   }
 
   Future _createDb(Database db, int version) async {
@@ -41,6 +65,21 @@ class DatabaseHelper {
         accountNumber TEXT NOT NULL,
         balance REAL NOT NULL,
         isDemo INTEGER NOT NULL,
+        FOREIGN KEY (userId) REFERENCES users (id)
+      )
+    ''');
+
+    // Create transactions table
+    await db.execute('''
+      CREATE TABLE transactions(
+        id TEXT PRIMARY KEY,
+        userId INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        categoryId TEXT NOT NULL,
+        amount REAL NOT NULL,
+        isExpense INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        note TEXT,
         FOREIGN KEY (userId) REFERENCES users (id)
       )
     ''');
@@ -112,18 +151,48 @@ class DatabaseHelper {
     );
   }
 
-  // Delete all transactions for a user
+  // Transaction operations
+  Future<int> insertTransaction(Map<String, dynamic> transaction) async {
+    final db = await database;
+    return await db.insert('transactions', transaction);
+  }
+
+  Future<int> updateTransaction(Map<String, dynamic> transaction) async {
+    final db = await database;
+    return await db.update(
+      'transactions',
+      transaction,
+      where: 'id = ?',
+      whereArgs: [transaction['id']],
+    );
+  }
+
+  Future<int> deleteTransaction(String id, int userId) async {
+    final db = await database;
+    return await db.delete(
+      'transactions',
+      where: 'id = ? AND userId = ?',
+      whereArgs: [id, userId],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getUserTransactions(int userId) async {
+    final db = await database;
+    return await db.query(
+      'transactions',
+      where: 'userId = ?',
+      whereArgs: [userId],
+      orderBy: 'date DESC',
+    );
+  }
+
   Future<int> deleteUserTransactions(int userId) async {
     final db = await database;
-    // If you have a transactions table, uncomment this
-    // return await db.delete(
-    //   'transactions',
-    //   where: 'userId = ?',
-    //   whereArgs: [userId],
-    // );
-
-    // Return 0 if no transactions table yet
-    return 0;
+    return await db.delete(
+      'transactions',
+      where: 'userId = ?',
+      whereArgs: [userId],
+    );
   }
 
   // Delete all budget data for a user

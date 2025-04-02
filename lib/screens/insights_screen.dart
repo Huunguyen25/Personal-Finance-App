@@ -3,11 +3,9 @@ import 'package:intl/intl.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../models/transaction.dart';
 import '../models/transaction_categories.dart';
-import '../services/budget_service.dart';
 import '../services/transaction_service.dart';
 import '../database/budget_database.dart';
 import '../services/auth_service.dart'; // Add this import for getting the current user
-import 'dart:math' as math;
 
 class InsightsScreen extends StatefulWidget {
   const InsightsScreen({super.key});
@@ -789,8 +787,19 @@ class _InsightsScreenState extends State<InsightsScreen> {
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: () {
-                  // Navigate directly to the transactions screen instead of home
-                  Navigator.pushNamed(context, '/transactions');
+                  // Navigate to home and then switch to transactions tab
+                  Navigator.pushNamedAndRemoveUntil(
+                    context,
+                    '/home',
+                    (route) => false,
+                  );
+                  // Set a small delay to ensure the home screen is loaded first
+                  Future.delayed(const Duration(milliseconds: 100), () {
+                    // Access the tab controller from the parent widget
+                    final tabController = DefaultTabController.of(context);
+                    // Index 2 is typically the transactions tab in most finance apps
+                    tabController.animateTo(2);
+                  });
                 },
                 child: const Text('Add Transactions'),
               ),
